@@ -51,21 +51,55 @@ func (Impl) GenerateKeyPair(xEntropy []byte) (*KeyPair, error) {
 	}, nil
 }
 
-//
-//func (Impl) Sign(keyPair *KeyPair, message []byte, kEntropy []byte) (*Signature, error) {
-//	curve := elliptic.P256()
-//	k := new(big.Int).SetBytes(kEntropy)
-//	k.Mod(x, curve.Params().N)
-//
-//	//   1. Pick random k
-//	// already from parameters
-//	//	2. R = k*G
-//	RX, RY := curve.ScalarBaseMult(k.Bytes())
-//	R := &Point{X: RX, Y: RY}
-//
-//	//   3. e = H(R || P || m)
-//	e := computeE(R, keyPair.PublicKey, message)
-//}
+func (Impl) Sign(keyPair *KeyPair, message []byte, kEntropy []byte) (*Signature, error) {
+	curve := elliptic.P256() // Uncomment when implementing
+
+	// Step 1: Pick random nonce k (provided via kEntropy)
+	// - k must be in range [1, n-1] where n is the curve order
+	// - k = kEntropy mod n
+	k := new(big.Int).SetBytes(kEntropy)
+	k.Mod(k, curve.Params().N)
+
+	// Step 2: Compute commitment R = k*G
+	// - G is the generator point of the curve
+	// - R is the "commitment" that will be part of the signature
+	rX, rY := curve.ScalarBaseMult(k.Bytes())
+	R := &Point{X: rX, Y: rY}
+
+	// Step 3: Compute challenge e = H(R || P || m)
+	// - Hash the commitment R, public key P, and message m together
+	// - This binds the signature to all three values
+	e := computeE(R, keyPair.PublicKey, message)
+
+	// Step 4: Compute response s = k + e*x (mod n)
+	// - x is the private key
+	// - s proves knowledge of x without revealing it
+	s := new(big.Int).Mul(e, keyPair.PrivateKey)
+	s.Add(s, k).Mod(s, curve.Params().N)
+
+	// Step 5: Return signature (R, s)
+	return &Signature{R: R, S: s}, nil
+}
+
+func (Impl) Verify(publicKey *Point, message []byte, sig *Signature) bool {
+	// Step 1: Compute challenge e = H(R || P || m)
+	// - Use the same hash function as in Sign
+	// - R comes from the signature, P is the public key
+
+	// Step 2: Compute left side of verification equation: sG = s*G
+	// - Scalar multiply s by generator point G
+
+	// Step 3: Compute right side of verification equation: R + eP
+	// - First compute e*P (scalar multiply e by public key)
+	// - Then add R + e*P (point addition)
+
+	// Step 4: Compare: sG == R + eP
+	// - If the x and y coordinates match, signature is valid
+	// - Return true if valid, false otherwise
+
+	// TODO: Implement the steps above
+	return false
+}
 
 // Serialize R, P, and message into bytes, then hash
 func computeE(R, P *Point, message []byte) *big.Int {
