@@ -98,7 +98,7 @@ func (Impl) Verify(publicKey *Point, message []byte, sig *Signature) bool {
 	// - First compute e*P (scalar multiply e by public key)
 	// - Then add R + e*P (point addition)
 	eMultPX, eMultpY := curve.ScalarMult(publicKey.X, publicKey.Y, e.Bytes())
-	rightX, rightY := curve.Add(publicKey.X, publicKey.Y, eMultPX, eMultpY)
+	rightX, rightY := curve.Add(sig.R.X, sig.R.Y, eMultPX, eMultpY)
 	right := &Point{X: rightX, Y: rightY}
 
 	// Step 4: Compare: sG == R + eP
@@ -106,7 +106,7 @@ func (Impl) Verify(publicKey *Point, message []byte, sig *Signature) bool {
 	// - Return true if valid, false otherwise
 
 	// TODO: Implement the steps above
-	return right == left
+	return left.X.Cmp(right.X) == 0 && left.Y.Cmp(right.Y) == 0
 }
 
 // Serialize R, P, and message into bytes, then hash
