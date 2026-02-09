@@ -82,23 +82,31 @@ func (Impl) Sign(keyPair *KeyPair, message []byte, kEntropy []byte) (*Signature,
 }
 
 func (Impl) Verify(publicKey *Point, message []byte, sig *Signature) bool {
+	curve := elliptic.P256()
 	// Step 1: Compute challenge e = H(R || P || m)
+	e := computeE(sig.R, publicKey, message)
 	// - Use the same hash function as in Sign
 	// - R comes from the signature, P is the public key
+	//e := computeE(sig.R, publicKey, message)
 
 	// Step 2: Compute left side of verification equation: sG = s*G
 	// - Scalar multiply s by generator point G
+	leftX, leftY := curve.ScalarBaseMult(sig.S.Bytes())
+	left := &Point{X: leftX, Y: leftY}
 
 	// Step 3: Compute right side of verification equation: R + eP
 	// - First compute e*P (scalar multiply e by public key)
 	// - Then add R + e*P (point addition)
+	eMultPX, eMultpY := curve.ScalarMult(publicKey.X, publicKey.Y, e.Bytes())
+	rightX, rightY := curve.Add(publicKey.X, publicKey.Y, eMultPX, eMultpY)
+	right := &Point{X: rightX, Y: rightY}
 
 	// Step 4: Compare: sG == R + eP
 	// - If the x and y coordinates match, signature is valid
 	// - Return true if valid, false otherwise
 
 	// TODO: Implement the steps above
-	return false
+	return right == left
 }
 
 // Serialize R, P, and message into bytes, then hash
