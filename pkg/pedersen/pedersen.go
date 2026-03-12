@@ -1,6 +1,10 @@
 package pedersen
 
-import "math/big"
+import (
+	"crypto/elliptic"
+	"crypto/sha256"
+	"math/big"
+)
 
 // Point represents a point on an elliptic curve
 type Point struct {
@@ -44,3 +48,52 @@ type Pedersen interface {
 	// then C1 + C2 = (v1+v2)*G + (r1+r2)*H.
 	Add(params *Params, c1, c2 *Commitment) *Commitment
 }
+
+type Impl struct {
+}
+
+func (Impl) Setup(seed []byte) (*Params, error) {
+	curve := elliptic.P256()
+
+	// G is the standard base generator of the curve
+	G := &Point{
+		X: curve.Params().Gx,
+		Y: curve.Params().Gy,
+	}
+
+	// H is derived by hashing the seed to a scalar, then computing H = h*G.
+	// Domain separation ("pedersen-H") ensures H is independent of G,
+	// and no party knows log_G(H) as long as the seed is a public, unbiased input.
+	h := sha256.New()
+	h.Write([]byte("pedersen-H"))
+	h.Write(seed)
+	hScalar := new(big.Int).SetBytes(h.Sum(nil))
+	hScalar.Mod(hScalar, curve.Params().N)
+
+	hX, hY := curve.ScalarBaseMult(hScalar.Bytes())
+	H := &Point{X: hX, Y: hY}
+
+	return &Params{G: G, H: H}, nil
+}
+
+func (Impl) Commit(params *Params, value *big.Int, blinding []byte) (*Commitment, *Opening, error) {
+	curve := elliptic.P256()
+	blindingBigInt := new(big.Int).SetBytes(blinding)
+	blindingBigInt.Mod(blindingBigInt, curve.Params().N)
+
+	vGx, vGy := curve.ScalarBaseMult(value.Bytes())
+	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blindingBigInt.Bytes())
+
+	cx, cy := curve.Add(vGx, vGy, rHx, rHy)
+
+	commitment := &Commitment{Point: &Point{X: cx, Y: cy}}
+	opening := &Opening{Value: value, Blinding: blindingBigInt}
+
+	return commitment, opening, nil
+}
+
+//func (Impl) Verify(params *Params, commitment *Commitment, opening *Opening) bool {
+//	// value * blinding + commitment * generator
+//	//curve := elliptic.P256()
+//
+//}
