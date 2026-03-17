@@ -42,11 +42,6 @@ type Pedersen interface {
 	// Verify checks that a commitment matches a given opening.
 	// Recomputes C' = v*G + r*H and checks C' == C.
 	Verify(params *Params, commitment *Commitment, opening *Opening) bool
-
-	// Add homomorphically adds two commitments.
-	// If C1 = v1*G + r1*H and C2 = v2*G + r2*H,
-	// then C1 + C2 = (v1+v2)*G + (r1+r2)*H.
-	Add(params *Params, c1, c2 *Commitment) *Commitment
 }
 
 type Impl struct {
@@ -63,7 +58,7 @@ func (Impl) Setup(seed []byte) (*Params, error) {
 
 	// H is derived by hashing the seed to a scalar, then computing H = h*G.
 	// Domain separation ("pedersen-H") ensures H is independent of G,
-	// and no party knows log_G(H) as long as the seed is a public, unbiased input.
+	// and no party knows it seam(H) as long as the seed is a public, unbiased input.
 	h := sha256.New()
 	h.Write([]byte("pedersen-H"))
 	h.Write(seed)
@@ -92,8 +87,18 @@ func (Impl) Commit(params *Params, value *big.Int, blinding []byte) (*Commitment
 	return commitment, opening, nil
 }
 
-//func (Impl) Verify(params *Params, commitment *Commitment, opening *Opening) bool {
-//	// value * blinding + commitment * generator
-//	//curve := elliptic.P256()
-//
-//}
+func (Impl) Verify(params *Params, commitment *Commitment, opening *Opening) bool {
+	curve := elliptic.P256()
+	value := opening.Value
+	value.Mod(value, curve.Params().N)
+
+	blinding := opening.Blinding
+	blinding.Mod(blinding, curve.Params().N)
+
+	vGx, vGy := curve.ScalarBaseMult(value.Bytes())
+	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blinding.Bytes())
+
+	cx, cy := curve.Add(vGx, vGy, rHx, rHy)
+
+	return cx == commitment.Point.X && cy == commitment.Point.Y
+}
