@@ -76,6 +76,8 @@ func (Impl) Commit(params *Params, value *big.Int, blinding []byte) (*Commitment
 	blindingBigInt := new(big.Int).SetBytes(blinding)
 	blindingBigInt.Mod(blindingBigInt, curve.Params().N)
 
+	value = new(big.Int).Mod(value, curve.Params().N)
+
 	vGx, vGy := curve.ScalarBaseMult(value.Bytes())
 	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blindingBigInt.Bytes())
 
@@ -100,5 +102,5 @@ func (Impl) Verify(params *Params, commitment *Commitment, opening *Opening) boo
 
 	cx, cy := curve.Add(vGx, vGy, rHx, rHy)
 
-	return cx == commitment.Point.X && cy == commitment.Point.Y
+	return cx.Cmp(commitment.Point.X) == 0 && cy.Cmp(commitment.Point.Y) == 0
 }
