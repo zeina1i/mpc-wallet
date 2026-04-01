@@ -1,6 +1,11 @@
 package vss
 
-import "math/big"
+import (
+	"crypto/rand"
+	"github.com/zeina1i/mpc-wallet/pkg/pedersen"
+	"log"
+	"math/big"
+)
 
 // Dealer manages VSS share creation and distribution
 type Dealer interface {
@@ -39,4 +44,24 @@ type Dealer interface {
 // threshold: minimum shares needed to reconstruct (t)
 // total: total number of shares to create (n)
 // Returns: Dealer instance or error
-//func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, error)
+func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, error) {
+	coefficients := make([]*big.Int, threshold)
+	coefficients[0] = secret // a₀
+
+	for i := 1; i < threshold; i++ {
+		// Generate random coefficient
+		coeff, _ := rand.Int(rand.Reader, params.N)
+		coefficients[i] = coeff
+	}
+
+	pImpl := &pedersen.Impl{}
+
+	commitments := []*Commitment{}
+	blinding := []byte("saaas")
+
+	//for i := 0; i < threshold; i++ {
+	//	pImpl.Commit(params, coefficients[i], blinding)
+	//	append(commitments, &Commitment{})
+	//}
+	//pederson.Commit(params)
+}
