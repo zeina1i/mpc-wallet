@@ -97,7 +97,7 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 	// Hint: f(i) = a₀ + a₁·i + a₂·i² + … + a_{t-1}·i^{t-1}  (all mod params.N)
 	// Horner's method is a clean way to evaluate: f(x) = a₀ + x·(a₁ + x·(a₂ + …))
 	shares := make([]*Share, total)
-	for i := 0; i < total; i++ {
+	for i := 1; i <= total; i++ {
 		x := big.NewInt(int64(i))
 		shares[i-1] = &Share{
 			Index: i,
@@ -129,8 +129,10 @@ func (d dealer) GetCommitments() []*Commitment {
 }
 
 func (d dealer) GetShareForParticipant(index int) (*Share, error) {
-	return d.shares[index], nil
-
+	if index < 1 || index > d.total {
+		return nil, ErrInvalidShareIndex
+	}
+	return d.shares[index-1], nil
 }
 
 func (d dealer) GetPublicKey() *PublicKey {
