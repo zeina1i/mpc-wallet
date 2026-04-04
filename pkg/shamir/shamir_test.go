@@ -1,222 +1,154 @@
 package shamir
 
 import (
-	"bytes"
 	"errors"
+	"math/big"
 	"testing"
 )
 
+// secp256k1 order used throughout tests
+var N = Secp256k1Order()
+
 func TestBasicSplitAndCombine(t *testing.T) {
-	secret := []byte("my secret key")
+	secret := big.NewInt(12345)
 	threshold := 3
 	total := 5
 
-	// Split
-	shares, err := Split(secret, threshold, total)
+	shares, err := Split(secret, N, threshold, total)
 	if err != nil {
 		t.Fatalf("Split failed: %v", err)
 	}
 
 	if len(shares) != total {
-		t.Fatalf("Expected %d shares, got %d", total, len(shares))
+		t.Fatalf("expected %d shares, got %d", total, len(shares))
 	}
 
-	// Combine with threshold shares
-	selectedShares := shares[0:threshold]
-	reconstructed, err := Combine(selectedShares)
+	reconstructed, err := Combine(shares[0:threshold], N)
 	if err != nil {
 		t.Fatalf("Combine failed: %v", err)
 	}
 
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatalf("Reconstructed secret doesn't match.\nExpected: %x\nGot: %x", secret, reconstructed)
+	if reconstructed.Cmp(secret) != 0 {
+		t.Fatalf("reconstructed %v, want %v", reconstructed, secret)
 	}
 }
 
-func TestInsufficientShares(t *testing.T) {
-	secret := []byte("my secret key")
-	threshold := 3
-	total := 5
+func TestInsufficientSharesGiveWrongResult(t *testing.T) {
+	secret := big.NewInt(99999)
+	shares, _ := Split(secret, N, 3, 5)
 
-	shares, _ := Split(secret, threshold, total)
-
-	// Try with only 2 shares (need 3)
-	insufficientShares := shares[0:2]
-	_, err := Combine(insufficientShares)
-
-	// Vault library may or may not error, but reconstruction will be wrong
-	if err == nil {
-		// If no error, the result should be incorrect
-		reconstructed, _ := Combine(insufficientShares)
-		if bytes.Equal(secret, reconstructed) {
-			t.Fatal("Should not reconstruct with insufficient shares")
-		}
+	// With only 2 shares (need 3), Lagrange gives a wrong value (not an error)
+	reconstructed, err := Combine(shares[0:2], N)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if reconstructed.Cmp(secret) == 0 {
+		t.Fatal("should not reconstruct secret with fewer than threshold shares")
 	}
 }
 
 func TestAllCombinationsWork(t *testing.T) {
-	secret := []byte("test secret")
+	secret := big.NewInt(42)
 	threshold := 3
 	total := 5
 
-	shares, _ := Split(secret, threshold, total)
+	shares, _ := Split(secret, N, threshold, total)
 
 	// Test all C(5,3) = 10 combinations
-	allWork := TestAllCombinations(shares, threshold, secret)
-	if !allWork {
-		t.Fatal("Not all combinations work")
-	}
-}
-
-func TestValidation(t *testing.T) {
-	secret := []byte("test")
-	shares, _ := Split(secret, 3, 5)
-
-	// Valid shares
-	err := ValidateShares(shares)
-	if err != nil {
-		t.Errorf("Valid shares rejected: %v", err)
-	}
-
-	// Nil share
-	invalidShares := []*Share{nil}
-	err = ValidateShares(invalidShares)
-	if !errors.Is(err, ErrNilShare) {
-		t.Errorf("Expected ErrNilShare, got %v", err)
-	}
-
-	// Duplicate index
-	duplicateShares := []*Share{shares[0], shares[0]}
-	err = ValidateShares(duplicateShares)
-	if !errors.Is(err, ErrDuplicateIndex) {
-		t.Errorf("Expected ErrDuplicateIndex, got %v", err)
-	}
-
-	// Index zero
-	zeroShare := &Share{Index: 0, Value: []byte("test")}
-	err = ValidateShares([]*Share{zeroShare})
-	if !errors.Is(err, ErrShareIndexZero) {
-		t.Errorf("Expected ErrShareIndexZero, got %v", err)
+	for i := 0; i < total; i++ {
+		for j := i + 1; j < total; j++ {
+			for k := j + 1; k < total; k++ {
+				combo := []*Share{shares[i], shares[j], shares[k]}
+				reconstructed, err := Combine(combo, N)
+				if err != nil {
+					t.Fatalf("Combine failed for combo (%d,%d,%d): %v", i, j, k, err)
+				}
+				if reconstructed.Cmp(secret) != 0 {
+					t.Fatalf("combo (%d,%d,%d): got %v, want %v", i, j, k, reconstructed, secret)
+				}
+			}
+		}
 	}
 }
 
 func TestMoreThanThresholdShares(t *testing.T) {
-	secret := []byte("test secret")
-	threshold := 3
-	total := 5
-
-	shares, _ := Split(secret, threshold, total)
+	secret := big.NewInt(7777)
+	shares, _ := Split(secret, N, 3, 5)
 
 	// Use 4 shares (more than threshold of 3)
-	selectedShares := shares[0:4]
-	reconstructed, err := Combine(selectedShares)
+	reconstructed, err := Combine(shares[0:4], N)
 	if err != nil {
 		t.Fatalf("Combine failed: %v", err)
 	}
-
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatal("Reconstruction with extra shares failed")
+	if reconstructed.Cmp(secret) != 0 {
+		t.Fatalf("got %v, want %v", reconstructed, secret)
 	}
 }
 
-func TestGenerateSecret(t *testing.T) {
-	secret, err := GenerateSecret(32)
-	if err != nil {
-		t.Fatalf("GenerateSecret failed: %v", err)
+func TestValidation(t *testing.T) {
+	// Nil share
+	err := validateShares([]*Share{nil})
+	if !errors.Is(err, ErrNilShare) {
+		t.Errorf("expected ErrNilShare, got %v", err)
 	}
 
-	if len(secret) != 32 {
-		t.Fatalf("Expected 32 bytes, got %d", len(secret))
+	// Index zero
+	err = validateShares([]*Share{{Index: 0, Value: big.NewInt(1)}})
+	if !errors.Is(err, ErrInvalidShareIndex) {
+		t.Errorf("expected ErrInvalidShareIndex, got %v", err)
 	}
 
-	// Should be able to split and combine
-	shares, _ := Split(secret, 3, 5)
-	reconstructed, _ := Combine(shares[0:3])
-
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatal("Generated secret failed reconstruction")
-	}
-}
-
-func TestSelectShares(t *testing.T) {
-	secret := []byte("test")
-	shares, _ := Split(secret, 3, 5)
-
-	selected, err := SelectShares(shares, 3)
-	if err != nil {
-		t.Fatalf("SelectShares failed: %v", err)
-	}
-
-	if len(selected) != 3 {
-		t.Fatalf("Expected 3 shares, got %d", len(selected))
-	}
-
-	// Should be able to reconstruct
-	reconstructed, _ := Combine(selected)
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatal("Selected shares failed reconstruction")
+	// Duplicate index
+	s := &Share{Index: 1, Value: big.NewInt(1)}
+	err = validateShares([]*Share{s, s})
+	if !errors.Is(err, ErrDuplicateIndex) {
+		t.Errorf("expected ErrDuplicateIndex, got %v", err)
 	}
 }
 
-func TestZeroSecret(t *testing.T) {
-	// Secret of all zeros should work
-	secret := make([]byte, 32)
-	shares, err := Split(secret, 3, 5)
-	if err != nil {
-		t.Fatalf("Split of zero secret failed: %v", err)
-	}
+func TestPolynomialEvaluateAt(t *testing.T) {
+	// f(x) = 5 + 3x + 2x²  mod N
+	// f(1) = 5+3+2 = 10
+	// f(2) = 5+6+8 = 19
+	coeffs := []*big.Int{big.NewInt(5), big.NewInt(3), big.NewInt(2)}
+	poly := &Polynomial{coefficients: coeffs, modulus: N}
 
-	reconstructed, err := Combine(shares[0:3])
-	if err != nil {
-		t.Fatalf("Combine failed: %v", err)
+	if got := poly.EvaluateAt(big.NewInt(1)); got.Cmp(big.NewInt(10)) != 0 {
+		t.Fatalf("f(1) = %v, want 10", got)
 	}
+	if got := poly.EvaluateAt(big.NewInt(2)); got.Cmp(big.NewInt(19)) != 0 {
+		t.Fatalf("f(2) = %v, want 19", got)
+	}
+}
 
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatal("Zero secret reconstruction failed")
+func TestPolynomialGetSecret(t *testing.T) {
+	secret := big.NewInt(1337)
+	poly, err := NewPolynomial(secret, N, 3)
+	if err != nil {
+		t.Fatalf("NewPolynomial failed: %v", err)
+	}
+	if poly.GetSecret().Cmp(secret) != 0 {
+		t.Fatalf("GetSecret() = %v, want %v", poly.GetSecret(), secret)
+	}
+	if poly.GetDegree() != 2 {
+		t.Fatalf("degree = %d, want 2", poly.GetDegree())
 	}
 }
 
 func TestLargeSecret(t *testing.T) {
-	// Test with large secret (1KB)
-	secret := make([]byte, 1024)
-	for i := range secret {
-		secret[i] = byte(i % 256)
-	}
+	// Secret close to N-1 (max valid scalar for secp256k1)
+	secret := new(big.Int).Sub(N, big.NewInt(1))
 
-	shares, err := Split(secret, 3, 5)
+	shares, err := Split(secret, N, 3, 5)
 	if err != nil {
-		t.Fatalf("Split of large secret failed: %v", err)
+		t.Fatalf("Split failed: %v", err)
 	}
 
-	reconstructed, err := Combine(shares[0:3])
+	reconstructed, err := Combine(shares[0:3], N)
 	if err != nil {
 		t.Fatalf("Combine failed: %v", err)
 	}
-
-	if !bytes.Equal(secret, reconstructed) {
-		t.Fatal("Large secret reconstruction failed")
-	}
-}
-
-func TestShareSerialization(t *testing.T) {
-	secret := []byte("test")
-	shares, _ := Split(secret, 3, 5)
-
-	// Convert to bytes and back
-	rawShares := make([][]byte, len(shares))
-	for i, share := range shares {
-		rawShares[i] = ShareToBytes(share)
-	}
-
-	reconstructedShares := SharesFromBytes(rawShares)
-
-	// Should still work
-	secret2, err := Combine(reconstructedShares[0:3])
-	if err != nil {
-		t.Fatalf("Combine after serialization failed: %v", err)
-	}
-
-	if !bytes.Equal(secret, secret2) {
-		t.Fatal("Serialization round-trip failed")
+	if reconstructed.Cmp(secret) != 0 {
+		t.Fatalf("got %v, want %v", reconstructed, secret)
 	}
 }
