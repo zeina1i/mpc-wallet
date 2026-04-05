@@ -2,7 +2,6 @@ package vss
 
 import (
 	"crypto/rand"
-	"github.com/zeina1i/mpc-wallet/pkg/pedersen"
 	"github.com/zeina1i/mpc-wallet/pkg/shamir"
 	"math/big"
 )
@@ -15,7 +14,6 @@ type dealer struct {
 	commitments []*Commitment
 	shares      []*Share
 	publicKey   *PublicKey
-	openings    []*Opening
 }
 
 // Dealer manages VSS share creation and distribution
@@ -24,8 +22,6 @@ type Dealer interface {
 	// These allow verifiers to check their shares
 	// Returns: [C₀, C₁, C₂, ...] where Cᵢ = aᵢ·G
 	GetCommitments() []*Commitment
-
-	GetOpenings() []*Opening
 
 	// GetShareForParticipant returns share for given participant
 	// index: participant identifier (1, 2, 3, ..., total)
@@ -68,51 +64,50 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 	}
 	coefficients := poly.GetCoefficients() // [a₀, a₁, …, a_{t-1}]
 
-	pImpl := &pedersen.Impl{}
-
-	// Pedersen VSS: commit to each coefficient — Cᵢ = aᵢ·G + rᵢ·H
-	// The commitments array should have `threshold` entries, one per coefficient.
-	commitments := make([]*Commitment, 0, threshold)
-	opennings := make([]*Opening, 0, threshold)
-
-	// BUG: blinding must be random per commitment (fresh rand.Int each iteration).
-	// Using a hardcoded value breaks the hiding property of the commitment.
-
-	// BUG: loop should run `threshold` times (one commit per coefficient), not `total`.
-	for i := 0; i < threshold; i++ {
-		blinding, _ := rand.Int(rand.Reader, params.N) // fresh each iteration
-		// BUG: pImpl.Commit expects *pedersen.Params, not *vss.Params.
-		// You need to build a *pedersen.Params from params.G and params.H first.
-		//
-		// BUG: Commit returns (*pedersen.Commitment, *pedersen.Opening, error) — capture them.
-		// Use the returned commitment's Point (X, Y) to fill a *vss.Commitment.
-		//
-		// BUG: append result is discarded — assign it back: commitments = append(...)
-		ps := pedersen.Params{
-			G: &pedersen.Point{X: params.G.X, Y: params.G.Y},
-			H: &pedersen.Point{X: params.H.X, Y: params.H.Y},
-		}
-		cm, openning, err := pImpl.Commit(&ps, coefficients[i], blinding.Bytes())
+	// Generate blinding polynomial g(x) with random coefficients r₀…r_{t-1}
+	blindingCoeffs := make([]*big.Int, threshold)
+	for i := range blindingCoeffs {
+		r, err := rand.Int(rand.Reader, params.N)
 		if err != nil {
 			return nil, err
 		}
-		commitments = append(commitments, &Commitment{C: &Point{X: cm.Point.X, Y: cm.Point.Y}})
-		opennings = append(opennings, &Opening{
-			Value:    openning.Value,
-			Blinding: openning.Blinding,
-		})
+		blindingCoeffs[i] = r
+	}
+
+	// Compute commitments directly: Cᵢ = aᵢ·G + rᵢ·H (on params.Curve)
+	curve := params.Curve
+	commitments := make([]*Commitment, threshold)
+	for i := 0; i < threshold; i++ {
+		aGx, aGy := curve.ScalarBaseMult(coefficients[i].Bytes())
+		rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blindingCoeffs[i].Bytes())
+		cx, cy := curve.Add(aGx, aGy, rHx, rHy)
+		commitments[i] = &Commitment{C: &Point{X: cx, Y: cy}}
 	}
 
 	// TODO: evaluate the polynomial f(i) for each participant i = 1 … total.
 	// share_i = f(i) mod N  →  Store as &Share{Index: i, Value: f(i)}
 	// Hint: f(i) = a₀ + a₁·i + a₂·i² + … + a_{t-1}·i^{t-1}  (all mod params.N)
 	// Horner's method is a clean way to evaluate: f(x) = a₀ + x·(a₁ + x·(a₂ + …))
+	// Evaluate f(i) and g(i) for each participant
 	shares := make([]*Share, total)
 	for i := 1; i <= total; i++ {
 		x := big.NewInt(int64(i))
+
+		// g(i) = r₀ + r₁·i + … + r_{t-1}·i^{t-1} mod N
+		gi := new(big.Int)
+		power := big.NewInt(1)
+		for _, r := range blindingCoeffs {
+			term := new(big.Int).Mul(r, power)
+			gi.Add(gi, term)
+			power.Mul(power, x)
+			power.Mod(power, params.N)
+		}
+		gi.Mod(gi, params.N)
+
 		shares[i-1] = &Share{
-			Index: i,
-			Value: poly.EvaluateAt(x),
+			Index:         i,
+			Value:         poly.EvaluateAt(x),
+			BlindingValue: gi,
 		}
 	}
 
@@ -132,7 +127,6 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 		commitments: commitments,
 		shares:      shares,
 		publicKey:   publicKey,
-		openings:    opennings,
 	}, nil
 }
 
@@ -166,8 +160,4 @@ func (d dealer) GetThreshold() int {
 
 func (d dealer) GetTotal() int {
 	return d.total
-}
-
-func (d dealer) GetOpenings() []*Opening {
-	return d.openings
 }

@@ -41,7 +41,6 @@ func main() {
 		verifier.AcceptShare(share)
 	}
 
-	// Reconstruct
 	shares := dealer.GetShares()[:3]
 	reconstructed, err := vss.Reconstruct(params, shares)
 	if err != nil {
