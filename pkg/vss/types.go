@@ -28,8 +28,9 @@ type Commitment struct {
 
 // Share represents a single VSS share
 type Share struct {
-	Index int      // Participant index (1, 2, 3, ...)
-	Value *big.Int // Share value f(index)
+	Index         int      // Participant index (1, 2, 3, ...)
+	Value         *big.Int // Share value f(index)
+	BlindingValue *big.Int
 }
 
 // PublicKey represents the derived public key
