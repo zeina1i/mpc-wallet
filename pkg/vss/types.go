@@ -36,3 +36,8 @@ type Share struct {
 type PublicKey struct {
 	Point *Point // Public key point (C₀ = secret·G)
 }
+
+type Opening struct {
+	Value    *big.Int
+	Blinding *big.Int
+}

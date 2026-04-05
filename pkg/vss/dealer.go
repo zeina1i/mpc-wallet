@@ -15,6 +15,7 @@ type dealer struct {
 	commitments []*Commitment
 	shares      []*Share
 	publicKey   *PublicKey
+	openings    []*Opening
 }
 
 // Dealer manages VSS share creation and distribution
@@ -23,6 +24,8 @@ type Dealer interface {
 	// These allow verifiers to check their shares
 	// Returns: [C₀, C₁, C₂, ...] where Cᵢ = aᵢ·G
 	GetCommitments() []*Commitment
+
+	GetOpenings() []*Opening
 
 	// GetShareForParticipant returns share for given participant
 	// index: participant identifier (1, 2, 3, ..., total)
@@ -70,6 +73,7 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 	// Pedersen VSS: commit to each coefficient — Cᵢ = aᵢ·G + rᵢ·H
 	// The commitments array should have `threshold` entries, one per coefficient.
 	commitments := make([]*Commitment, 0, threshold)
+	opennings := make([]*Opening, 0, threshold)
 
 	// BUG: blinding must be random per commitment (fresh rand.Int each iteration).
 	// Using a hardcoded value breaks the hiding property of the commitment.
@@ -88,8 +92,15 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 			G: &pedersen.Point{X: params.G.X, Y: params.G.Y},
 			H: &pedersen.Point{X: params.H.X, Y: params.H.Y},
 		}
-		cm, _, _ := pImpl.Commit(&ps, coefficients[i], blinding.Bytes())
+		cm, openning, err := pImpl.Commit(&ps, coefficients[i], blinding.Bytes())
+		if err != nil {
+			return nil, err
+		}
 		commitments = append(commitments, &Commitment{C: &Point{X: cm.Point.X, Y: cm.Point.Y}})
+		opennings = append(opennings, &Opening{
+			Value:    openning.Value,
+			Blinding: openning.Blinding,
+		})
 	}
 
 	// TODO: evaluate the polynomial f(i) for each participant i = 1 … total.
@@ -121,6 +132,7 @@ func NewDealer(params *Params, secret *big.Int, threshold, total int) (Dealer, e
 		commitments: commitments,
 		shares:      shares,
 		publicKey:   publicKey,
+		openings:    opennings,
 	}, nil
 }
 
@@ -151,6 +163,11 @@ func (d dealer) GetThreshold() int {
 	return d.threshold
 
 }
+
 func (d dealer) GetTotal() int {
 	return d.total
+}
+
+func (d dealer) GetOpenings() []*Opening {
+	return d.openings
 }
