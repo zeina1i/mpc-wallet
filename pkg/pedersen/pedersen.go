@@ -1,8 +1,8 @@
 package pedersen
 
 import (
-	"crypto/elliptic"
 	"crypto/sha256"
+	"github.com/btcsuite/btcd/btcec/v2"
 	"math/big"
 )
 
@@ -47,60 +47,29 @@ type Pedersen interface {
 type Impl struct {
 }
 
-func (Impl) Setup(seed []byte) (*Params, error) {
-	curve := elliptic.P256()
+func Setup(seed []byte) (*Params, error) {
+	curve := btcec.S256()
+	Gx := curve.Params().Gx
+	Gy := curve.Params().Gy
 
-	// G is the standard base generator of the curve
-	G := &Point{
-		X: curve.Params().Gx,
-		Y: curve.Params().Gy,
-	}
-
-	// H is derived by hashing the seed to a scalar, then computing H = h*G.
-	// Domain separation ("pedersen-H") ensures H is independent of G,
-	// and no party knows it seam(H) as long as the seed is a public, unbiased input.
+	hCurve := btcec.S256()
 	h := sha256.New()
-	h.Write([]byte("pedersen-H"))
 	h.Write(seed)
-	hScalar := new(big.Int).SetBytes(h.Sum(nil))
-	hScalar.Mod(hScalar, curve.Params().N)
+	hBytes := h.Sum(nil) // 32-byte hash
 
-	hX, hY := curve.ScalarBaseMult(hScalar.Bytes())
-	H := &Point{X: hX, Y: hY}
+	hScalar := new(big.Int).SetBytes(hBytes)
+	hScalar.Mod(hScalar, hCurve.Params().N)
 
-	return &Params{G: G, H: H}, nil
-}
+	Hx, Hy := hCurve.ScalarBaseMult(hScalar.Bytes())
 
-func (Impl) Commit(params *Params, value *big.Int, blinding []byte) (*Commitment, *Opening, error) {
-	curve := elliptic.P256()
-	blindingBigInt := new(big.Int).SetBytes(blinding)
-	blindingBigInt.Mod(blindingBigInt, curve.Params().N)
-
-	value = new(big.Int).Mod(value, curve.Params().N)
-
-	vGx, vGy := curve.ScalarBaseMult(value.Bytes())
-	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blindingBigInt.Bytes())
-
-	cx, cy := curve.Add(vGx, vGy, rHx, rHy)
-
-	commitment := &Commitment{Point: &Point{X: cx, Y: cy}}
-	opening := &Opening{Value: value, Blinding: blindingBigInt}
-
-	return commitment, opening, nil
-}
-
-func (Impl) Verify(params *Params, commitment *Commitment, opening *Opening) bool {
-	curve := elliptic.P256()
-	value := opening.Value
-	value.Mod(value, curve.Params().N)
-
-	blinding := opening.Blinding
-	blinding.Mod(blinding, curve.Params().N)
-
-	vGx, vGy := curve.ScalarBaseMult(value.Bytes())
-	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, blinding.Bytes())
-
-	cx, cy := curve.Add(vGx, vGy, rHx, rHy)
-
-	return cx.Cmp(commitment.Point.X) == 0 && cy.Cmp(commitment.Point.Y) == 0
+	return &Params{
+		G: &Point{
+			X: Gx,
+			Y: Gy,
+		},
+		H: &Point{
+			X: Hx,
+			Y: Hy,
+		},
+	}, nil
 }
