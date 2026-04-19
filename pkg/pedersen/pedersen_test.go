@@ -1,209 +1,172 @@
 package pedersen
 
 import (
-	"crypto/rand"
 	"math/big"
 	"testing"
+
+	"github.com/btcsuite/btcd/btcec/v2"
 )
 
-var impl = Impl{}
+var testSeed = []byte("pedersen-test-seed")
 
 func setupParams(t *testing.T) *Params {
 	t.Helper()
-	seed := make([]byte, 32)
-	_, err := rand.Read(seed)
-	if err != nil {
-		t.Fatalf("failed to generate seed: %v", err)
-	}
-	params, err := impl.Setup(seed)
+	params, err := Setup(testSeed)
 	if err != nil {
 		t.Fatalf("Setup failed: %v", err)
 	}
 	return params
 }
 
-func randomBlinding(t *testing.T) []byte {
-	t.Helper()
-	b := make([]byte, 32)
-	_, err := rand.Read(b)
-	if err != nil {
-		t.Fatalf("failed to generate blinding: %v", err)
-	}
-	return b
-}
-
-func TestSetup_ReturnsValidParams(t *testing.T) {
+// TestSetupHOnCurve verifies that H produced by Setup is a valid curve point.
+func TestSetupHOnCurve(t *testing.T) {
 	params := setupParams(t)
-
-	if params.G == nil || params.G.X == nil || params.G.Y == nil {
-		t.Fatal("G point is nil or incomplete")
-	}
-	if params.H == nil || params.H.X == nil || params.H.Y == nil {
-		t.Fatal("H point is nil or incomplete")
+	curve := btcec.S256()
+	if !curve.IsOnCurve(params.H.X, params.H.Y) {
+		t.Fatal("H is not on the curve")
 	}
 }
 
-func TestSetup_DifferentSeedsProduceDifferentH(t *testing.T) {
-	params1, _ := impl.Setup([]byte("seed-one"))
-	params2, _ := impl.Setup([]byte("seed-two"))
-
-	if params1.H.X.Cmp(params2.H.X) == 0 && params1.H.Y.Cmp(params2.H.Y) == 0 {
-		t.Fatal("different seeds should produce different H points")
+// TestSetupGMatchesCurveGenerator verifies that G matches secp256k1's base point.
+func TestSetupGMatchesCurveGenerator(t *testing.T) {
+	params := setupParams(t)
+	curve := btcec.S256()
+	if params.G.X.Cmp(curve.Params().Gx) != 0 || params.G.Y.Cmp(curve.Params().Gy) != 0 {
+		t.Fatal("G does not match the curve base point")
 	}
 }
 
-func TestSetup_SameSeedProducesSameH(t *testing.T) {
-	seed := []byte("deterministic-seed")
-	params1, _ := impl.Setup(seed)
-	params2, _ := impl.Setup(seed)
-
-	if params1.H.X.Cmp(params2.H.X) != 0 || params1.H.Y.Cmp(params2.H.Y) != 0 {
-		t.Fatal("same seed should produce the same H point")
+// TestSetupDeterministic verifies that the same seed produces the same params.
+func TestSetupDeterministic(t *testing.T) {
+	p1, _ := Setup(testSeed)
+	p2, _ := Setup(testSeed)
+	if p1.H.X.Cmp(p2.H.X) != 0 || p1.H.Y.Cmp(p2.H.Y) != 0 {
+		t.Fatal("Setup is not deterministic for the same seed")
 	}
 }
 
-func TestCommitAndVerify(t *testing.T) {
+// TestSetupDifferentSeedsDifferentH verifies that different seeds produce different H.
+func TestSetupDifferentSeedsDifferentH(t *testing.T) {
+	p1, _ := Setup([]byte("seed-a"))
+	p2, _ := Setup([]byte("seed-b"))
+	if p1.H.X.Cmp(p2.H.X) == 0 && p1.H.Y.Cmp(p2.H.Y) == 0 {
+		t.Fatal("different seeds produced the same H")
+	}
+}
+
+// TestCommitVerifyRoundtrip is the happy path: commit then verify succeeds.
+func TestCommitVerifyRoundtrip(t *testing.T) {
 	params := setupParams(t)
 	value := big.NewInt(42)
-	blinding := randomBlinding(t)
+	blinding := big.NewInt(12345)
 
-	commitment, opening, err := impl.Commit(params, value, blinding)
+	commitment, opening, err := Commit(params, value, blinding)
 	if err != nil {
 		t.Fatalf("Commit failed: %v", err)
 	}
-
-	// Copy value/blinding before Verify mutates them
-	verifyOpening := &Opening{
-		Value:    new(big.Int).Set(opening.Value),
-		Blinding: new(big.Int).Set(opening.Blinding),
-	}
-
-	if !impl.Verify(params, commitment, verifyOpening) {
+	if !Verify(params, commitment, opening) {
 		t.Fatal("Verify returned false for a valid commitment")
 	}
 }
 
-func TestVerify_WrongValueFails(t *testing.T) {
+// TestCommitWrongValueFails verifies that tampering with the value breaks verification.
+func TestCommitWrongValueFails(t *testing.T) {
 	params := setupParams(t)
-	blinding := randomBlinding(t)
-
-	commitment, _, err := impl.Commit(params, big.NewInt(42), blinding)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	wrongOpening := &Opening{
-		Value:    big.NewInt(99),
-		Blinding: new(big.Int).SetBytes(blinding),
-	}
-
-	if impl.Verify(params, commitment, wrongOpening) {
-		t.Fatal("Verify should return false for wrong value")
+	commitment, opening, _ := Commit(params, big.NewInt(42), big.NewInt(99))
+	opening.Value = big.NewInt(43) // tamper
+	if Verify(params, commitment, opening) {
+		t.Fatal("Verify should fail with a wrong value")
 	}
 }
 
-func TestVerify_WrongBlindingFails(t *testing.T) {
+// TestCommitWrongBlindingFails verifies that tampering with the blinding factor breaks verification.
+func TestCommitWrongBlindingFails(t *testing.T) {
 	params := setupParams(t)
-	value := big.NewInt(42)
-	blinding := randomBlinding(t)
-
-	commitment, opening, err := impl.Commit(params, value, blinding)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	wrongOpening := &Opening{
-		Value:    new(big.Int).Set(opening.Value),
-		Blinding: big.NewInt(9999),
-	}
-
-	if impl.Verify(params, commitment, wrongOpening) {
-		t.Fatal("Verify should return false for wrong blinding")
+	commitment, opening, _ := Commit(params, big.NewInt(42), big.NewInt(99))
+	opening.Blinding = big.NewInt(100) // tamper
+	if Verify(params, commitment, opening) {
+		t.Fatal("Verify should fail with a wrong blinding factor")
 	}
 }
 
-func TestVerify_WrongParamsFails(t *testing.T) {
-	params1 := setupParams(t)
-	params2 := setupParams(t)
-	value := big.NewInt(42)
-	blinding := randomBlinding(t)
-
-	commitment, opening, err := impl.Commit(params1, value, blinding)
-	if err != nil {
-		t.Fatalf("Commit failed: %v", err)
-	}
-
-	verifyOpening := &Opening{
-		Value:    new(big.Int).Set(opening.Value),
-		Blinding: new(big.Int).Set(opening.Blinding),
-	}
-
-	if impl.Verify(params2, commitment, verifyOpening) {
-		t.Fatal("Verify should return false when using different params")
-	}
-}
-
-func TestCommit_ZeroValue(t *testing.T) {
+// TestCommitHidingDifferentBlindings verifies that committing the same value with
+// different blinding factors produces different commitments (hiding property).
+func TestCommitHidingDifferentBlindings(t *testing.T) {
 	params := setupParams(t)
-	blinding := randomBlinding(t)
-
-	commitment, opening, err := impl.Commit(params, big.NewInt(0), blinding)
-	if err != nil {
-		t.Fatalf("Commit failed for zero value: %v", err)
-	}
-
-	verifyOpening := &Opening{
-		Value:    new(big.Int).Set(opening.Value),
-		Blinding: new(big.Int).Set(opening.Blinding),
-	}
-
-	if !impl.Verify(params, commitment, verifyOpening) {
-		t.Fatal("Verify failed for zero value commitment")
-	}
-}
-
-func TestCommit_LargeValue(t *testing.T) {
-	params := setupParams(t)
-	blinding := randomBlinding(t)
-
-	large := new(big.Int).Lsh(big.NewInt(1), 200)
-
-	commitment, opening, err := impl.Commit(params, large, blinding)
-	if err != nil {
-		t.Fatalf("Commit failed for large value: %v", err)
-	}
-
-	verifyOpening := &Opening{
-		Value:    new(big.Int).Set(opening.Value),
-		Blinding: new(big.Int).Set(opening.Blinding),
-	}
-
-	if !impl.Verify(params, commitment, verifyOpening) {
-		t.Fatal("Verify failed for large value commitment")
-	}
-}
-
-func TestCommit_IsDeterministic(t *testing.T) {
-	params := setupParams(t)
-	value := big.NewInt(42)
-	blinding := []byte("fixed-blinding-value-0000000000")
-
-	c1, _, _ := impl.Commit(params, new(big.Int).Set(value), blinding)
-	c2, _, _ := impl.Commit(params, new(big.Int).Set(value), blinding)
-
-	if c1.Point.X.Cmp(c2.Point.X) != 0 || c1.Point.Y.Cmp(c2.Point.Y) != 0 {
-		t.Fatal("Commit should be deterministic for the same inputs")
-	}
-}
-
-func TestCommit_DifferentValuesProduceDifferentCommitments(t *testing.T) {
-	params := setupParams(t)
-	blinding := randomBlinding(t)
-
-	c1, _, _ := impl.Commit(params, big.NewInt(1), blinding)
-	c2, _, _ := impl.Commit(params, big.NewInt(2), blinding)
-
+	c1, _, _ := Commit(params, big.NewInt(42), big.NewInt(1))
+	c2, _, _ := Commit(params, big.NewInt(42), big.NewInt(2))
 	if c1.Point.X.Cmp(c2.Point.X) == 0 && c1.Point.Y.Cmp(c2.Point.Y) == 0 {
-		t.Fatal("different values should produce different commitments")
+		t.Fatal("same value with different blindings produced the same commitment")
+	}
+}
+
+// TestCommitHomomorphic verifies the additive homomorphic property:
+// Commit(v1,r1) + Commit(v2,r2) == Commit(v1+v2, r1+r2)
+func TestCommitHomomorphic(t *testing.T) {
+	params := setupParams(t)
+	v1, r1 := big.NewInt(10), big.NewInt(100)
+	v2, r2 := big.NewInt(20), big.NewInt(200)
+
+	c1, _, _ := Commit(params, v1, r1)
+	c2, _, _ := Commit(params, v2, r2)
+
+	curve := btcec.S256()
+	sumX, sumY := curve.Add(c1.Point.X, c1.Point.Y, c2.Point.X, c2.Point.Y)
+
+	n := curve.Params().N
+	vSum := new(big.Int).Mod(new(big.Int).Add(v1, v2), n)
+	rSum := new(big.Int).Mod(new(big.Int).Add(r1, r2), n)
+	cSum, _, err := Commit(params, vSum, rSum)
+	if err != nil {
+		t.Fatalf("Commit(v1+v2, r1+r2) failed: %v", err)
+	}
+
+	if sumX.Cmp(cSum.Point.X) != 0 || sumY.Cmp(cSum.Point.Y) != 0 {
+		t.Fatal("homomorphic addition property does not hold")
+	}
+}
+
+// TestCommitZeroValueError verifies that a zero value is rejected.
+func TestCommitZeroValueError(t *testing.T) {
+	params := setupParams(t)
+	_, _, err := Commit(params, big.NewInt(0), big.NewInt(99))
+	if err == nil {
+		t.Fatal("expected error for zero value")
+	}
+}
+
+// TestCommitZeroBlindingError verifies that a zero blinding factor is rejected.
+func TestCommitZeroBlindingError(t *testing.T) {
+	params := setupParams(t)
+	_, _, err := Commit(params, big.NewInt(42), big.NewInt(0))
+	if err == nil {
+		t.Fatal("expected error for zero blinding factor")
+	}
+}
+
+// TestCommitLargeValue verifies that a value larger than N is handled correctly via mod reduction.
+func TestCommitLargeValue(t *testing.T) {
+	params := setupParams(t)
+	curve := btcec.S256()
+	n := curve.Params().N
+
+	// value = N + 42, which should behave identically to 42
+	large := new(big.Int).Add(n, big.NewInt(42))
+	blinding := big.NewInt(7)
+
+	cLarge, oLarge, err := Commit(params, large, blinding)
+	if err != nil {
+		t.Fatalf("Commit with large value failed: %v", err)
+	}
+	cSmall, _, err := Commit(params, big.NewInt(42), blinding)
+	if err != nil {
+		t.Fatalf("Commit with small value failed: %v", err)
+	}
+
+	if cLarge.Point.X.Cmp(cSmall.Point.X) != 0 || cLarge.Point.Y.Cmp(cSmall.Point.Y) != 0 {
+		t.Fatal("value >= N was not correctly reduced mod N")
+	}
+	if !Verify(params, cLarge, oLarge) {
+		t.Fatal("Verify failed for large value commitment")
 	}
 }
