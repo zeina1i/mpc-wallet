@@ -110,7 +110,10 @@ func CommitCoefficients(params *Params, fCoeffs []*big.Int, gCoeffs []*big.Int) 
 	ops := make([]*Opening, len(fCoeffs))
 
 	for i := 0; i < len(fCoeffs); i++ {
-		cm, opening, _ := Commit(params, fCoeffs[i], gCoeffs[i])
+		cm, opening, err := Commit(params, fCoeffs[i], gCoeffs[i])
+		if err != nil {
+			return nil, nil, err
+		}
 		cms[i] = cm
 		ops[i] = opening
 	}
@@ -133,14 +136,40 @@ func Verify(params *Params, commitment *Commitment, opening *Opening) bool {
 
 }
 
-func VerifyShare(params *Params, fi, gi *big.Int, i int, commitments []*Commitment, openings []*Opening) bool {
-	for i, commit := range commitments {
-		if Verify(params, commit, openings[i]) == false {
-			return false
+// VerifyShare checks that a participant's share pair (fi, gi) is consistent
+// with the dealer's published commitments.
+//
+//	LHS = fi*G + gi*H
+//	RHS = Σ idx^k * C[k]  for k = 0..t-1
+func VerifyShare(params *Params, fi, gi *big.Int, idx int, commitments []*Commitment) bool {
+	curve := btcec.S256()
+	N := curve.Params().N
+
+	// LHS = fi*G + gi*H
+	vGx, vGy := curve.ScalarMult(params.G.X, params.G.Y, fi.Bytes())
+	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, gi.Bytes())
+	lhsX, lhsY := curve.Add(vGx, vGy, rHx, rHy)
+
+	// RHS = Σ idx^k * C[k]
+	index := big.NewInt(int64(idx))
+	iPow := big.NewInt(1)
+
+	var rhsX, rhsY *big.Int
+	for k, c := range commitments {
+		scalar := new(big.Int).Mod(iPow, N)
+		termX, termY := curve.ScalarMult(c.Point.X, c.Point.Y, scalar.Bytes())
+
+		if k == 0 {
+			rhsX, rhsY = termX, termY
+		} else {
+			rhsX, rhsY = curve.Add(rhsX, rhsY, termX, termY)
 		}
+
+		iPow.Mul(iPow, index)
+		iPow.Mod(iPow, N)
 	}
 
-	return true
+	return lhsX.Cmp(rhsX) == 0 && lhsY.Cmp(rhsY) == 0
 }
 
 func hashToCurvePoint(curve *btcec.KoblitzCurve, seed []byte) (*big.Int, *big.Int) {
