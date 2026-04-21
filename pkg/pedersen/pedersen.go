@@ -2,7 +2,6 @@ package pedersen
 
 import (
 	"crypto/sha256"
-	"fmt"
 	"math/big"
 
 	"github.com/btcsuite/btcd/btcec/v2"
@@ -88,13 +87,10 @@ func Commit(params *Params, value *big.Int, blinding *big.Int) (*Commitment, *Op
 	//todo: checkkk
 	v := new(big.Int).Mod(value, n)
 	r := new(big.Int).Mod(blinding, n)
-	if v.Sign() == 0 || r.Sign() == 0 {
-		return nil, nil, fmt.Errorf("value and blinding must be non-zero")
-	}
-	fx, fy := curve.ScalarMult(params.G.X, params.G.Y, v.Bytes())
-	gx, gy := curve.ScalarMult(params.H.X, params.H.Y, r.Bytes())
+	vGx, vGy := curve.ScalarMult(params.G.X, params.G.Y, v.Bytes())
+	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, r.Bytes())
 
-	cmX, cmY := curve.Add(fx, fy, gx, gy)
+	cmX, cmY := curve.Add(vGx, vGy, rHx, rHy)
 
 	commitment := &Commitment{Point: &Point{
 		X: cmX,
@@ -115,10 +111,10 @@ func Verify(params *Params, commitment *Commitment, opening *Opening) bool {
 	v := new(big.Int).Mod(opening.Value, n)
 	r := new(big.Int).Mod(opening.Blinding, n)
 
-	fx, fy := curve.ScalarMult(params.G.X, params.G.Y, v.Bytes())
-	gx, gy := curve.ScalarMult(params.H.X, params.H.Y, r.Bytes())
+	vGx, vGy := curve.ScalarMult(params.G.X, params.G.Y, v.Bytes())
+	rHx, rHy := curve.ScalarMult(params.H.X, params.H.Y, r.Bytes())
 
-	cmX, cmY := curve.Add(fx, fy, gx, gy)
+	cmX, cmY := curve.Add(vGx, vGy, rHx, rHy)
 
 	return commitment.Point.X.Cmp(cmX) == 0 && commitment.Point.Y.Cmp(cmY) == 0
 

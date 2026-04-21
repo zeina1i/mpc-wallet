@@ -10,10 +10,17 @@ type Dealer struct {
 	shamir []*shamir.Share
 }
 
-func (d Dealer) NewDealer(secret *big.Int, threshold, total int) (Dealer, error) {
-	sh, _ := shamir.Split(secret, shamir.Secp256k1Order(), threshold, total)
+func NewDealer(secret *big.Int, threshold, total int) (Dealer, error) {
+	sh, err := shamir.Split(secret, shamir.Secp256k1Order(), threshold, total)
+	if err != nil {
+		return Dealer{}, err
+	}
 
 	return Dealer{
 		shamir: sh,
 	}, nil
+}
+
+func (d Dealer) Shares() []*shamir.Share {
+	return d.shamir
 }

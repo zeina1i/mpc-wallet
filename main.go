@@ -2,51 +2,28 @@ package main
 
 import (
 	"fmt"
-	"github.com/zeina1i/mpc-wallet/pkg/vss"
 	"log"
 	"math/big"
+
+	"github.com/zeina1i/mpc-wallet/pkg/vss"
 )
 
 func main() {
-	// Setup
-	params := vss.NewParamsSecp256k1()
-	secret := big.NewInt(12345)
+	secret := big.
+		NewInt(42)
+	threshold := 2
+	total := 3
 
-	// Create dealer
-	dealer, err := vss.NewDealer(params, secret, 3, 5)
+	dealer, err := vss.NewDealer(secret, threshold, total)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to create dealer: %v", err)
 	}
 
-	// Get commitments
-	commitments := dealer.GetCommitments()
-	fmt.Printf("Commitments: %d\n", len(commitments))
-
-	// Get public key
-	pubKey := dealer.GetPublicKey()
-	fmt.Printf("Public Key: %x\n", pubKey.Point.X.Bytes()[:8])
-
-	// Create verifier
-	verifier, err := vss.NewVerifier(params, commitments)
-	if err != nil {
-		log.Fatal(err)
+	fmt.Printf("Secret split into %d shares (threshold=%d)\n", total, threshold)
+	for _, s := range dealer.Shares() {
+		fmt.Printf("  share[%d] = %s\n", s.Index, s.Value.String())
 	}
 
-	// Get and verify share
-	share, _ := dealer.GetShareForParticipant(1)
-	valid := verifier.VerifyShare(share)
-	fmt.Printf("Share valid: %v\n", valid)
-
-	if valid {
-		verifier.AcceptShare(share)
-	}
-
-	shares := dealer.GetShares()[:3]
-	reconstructed, err := vss.Reconstruct(params, shares)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Printf("Reconstructed: %s\n", reconstructed)
-	fmt.Printf("Matches: %v\n", reconstructed.Cmp(secret) == 0)
+	reconstructedSecret, _ := vss.Combine(dealer.Shares())
+	fmt.Printf(reconstructedSecret.String())
 }
