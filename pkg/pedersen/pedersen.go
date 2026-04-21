@@ -105,6 +105,19 @@ func Commit(params *Params, value *big.Int, blinding *big.Int) (*Commitment, *Op
 	return commitment, opening, nil
 }
 
+func CommitCoefficients(params *Params, fCoeffs []*big.Int, gCoeffs []*big.Int) ([]*Commitment, []*Opening, error) {
+	cms := make([]*Commitment, len(fCoeffs))
+	ops := make([]*Opening, len(fCoeffs))
+
+	for i := 0; i < len(fCoeffs); i++ {
+		cm, opening, _ := Commit(params, fCoeffs[i], gCoeffs[i])
+		cms[i] = cm
+		ops[i] = opening
+	}
+
+	return cms, ops, nil
+}
+
 func Verify(params *Params, commitment *Commitment, opening *Opening) bool {
 	curve := btcec.S256()
 	n := curve.Params().N
@@ -118,6 +131,16 @@ func Verify(params *Params, commitment *Commitment, opening *Opening) bool {
 
 	return commitment.Point.X.Cmp(cmX) == 0 && commitment.Point.Y.Cmp(cmY) == 0
 
+}
+
+func VerifyShare(params *Params, fi, gi *big.Int, i int, commitments []*Commitment, openings []*Opening) bool {
+	for i, commit := range commitments {
+		if Verify(params, commit, openings[i]) == false {
+			return false
+		}
+	}
+
+	return true
 }
 
 func hashToCurvePoint(curve *btcec.KoblitzCurve, seed []byte) (*big.Int, *big.Int) {
