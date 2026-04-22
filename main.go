@@ -14,7 +14,7 @@ func main() {
 	threshold := 2
 	total := 3
 
-	dealer, err := vss.NewDealer(secret, threshold, total)
+	dealer, err := vss.NewDealer(secret, threshold, total, []byte("main-seed"))
 	if err != nil {
 		log.Fatalf("failed to create dealer: %v", err)
 	}
