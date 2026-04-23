@@ -1,5 +1,12 @@
 package dkg
 
+import (
+	"crypto/rand"
+	"github.com/zeina1i/mpc-wallet/pkg/pedersen"
+	"github.com/zeina1i/mpc-wallet/pkg/shamir"
+	"github.com/zeina1i/mpc-wallet/pkg/vss"
+)
+
 // Participant represents a DKG participant
 type Participant interface {
 	// GetID returns participant's ID
@@ -26,13 +33,47 @@ type Participant interface {
 	GetTotal() int
 }
 
+type ParticipantImpl struct {
+	id         ParticipantID
+	threshold  int
+	total      int
+	dealer     *vss.Dealer                        // created in Round1
+	broadcast  *Round1Broadcast                   // your own broadcast, set in Round1
+	broadcasts map[ParticipantID]*Round1Broadcast // received from others
+	shares     map[ParticipantID]*Round1Share     // received from others    }
+}
+
 // NewParticipant creates a new DKG participant
 // params: VSS parameters
 // id: this participant's ID (1, 2, 3, ...)
 // threshold: minimum shares needed (t)
 // total: total participants (n)
-//func NewParticipant(
-//	params *pedersen.Params,
-//	id ParticipantID,
-//	threshold, total int,
-//) (Participant, error)
+func NewParticipant(
+	params *pedersen.Params,
+	id ParticipantID,
+	threshold, total int,
+) (*ParticipantImpl, error) {
+	N := shamir.Secp256k1Order()
+	secret, err := rand.Int(rand.Reader, N)
+	if err != nil {
+		return nil, err
+	}
+
+	dealer, err := vss.NewDealer(secret, threshold, total, []byte("main-seed"))
+	if err != nil {
+		return nil, err
+	}
+
+	broadcast := &Round1Broadcast{
+		SenderID:    id,
+		Commitments: dealer.Commitments(),
+	}
+
+	return &ParticipantImpl{
+		dealer:    &dealer,
+		id:        id,
+		threshold: threshold,
+		total:     total,
+		broadcast: broadcast,
+	}, nil
+}
