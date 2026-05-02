@@ -18,13 +18,15 @@ type Round1Broadcast struct {
 type Round1Share struct {
 	SenderID   ParticipantID
 	ReceiverID ParticipantID
-	Share      *shamir.Share
+	Share      *shamir.Share // f_i(j)
+	Blinding   *shamir.Share // g_i(j) — needed for VSS verification
 }
 
 // DKGResult is the final output
 type DKGResult struct {
-	ParticipantID ParticipantID
-	FinalShare    *shamir.Share
-	Threshold     int
-	Total         int
+	ParticipantID  ParticipantID
+	FinalShare     *shamir.Share
+	GroupPublicKey *pedersen.Point // Y = Σ C_k0, the shared public key
+	Threshold      int
+	Total          int
 }
