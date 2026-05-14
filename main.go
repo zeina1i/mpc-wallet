@@ -1,78 +1,67 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"math/big"
+	"os"
 
-	"github.com/zeina1i/mpc-wallet/pkg/dkg"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/zeina1i/mpc-wallet/pkg/wallet"
+)
+
+const (
+	parties   = 3
+	threshold = 1 // threshold+1 = 2 signers required
+	rpcURL    = "https://ethereum-sepolia-rpc.publicnode.com"
+	keysFile  = "keys.json" // persisted key shares
 )
 
 func main() {
-	seed := []byte("shared-pedersen-seed")
-	threshold := 2
-	total := 3
+	w, err := loadOrCreate()
+	if err != nil {
+		log.Fatalf("wallet: %v", err)
+	}
+	fmt.Printf("Wallet address: %s\n\n", w.Address().Hex())
 
-	fmt.Printf("=== DKG: %d-of-%d ===\n\n", threshold, total)
+	// --- Send Transaction ---
+	// Any 2 of the 3 parties collaborate to sign without any single party
+	// ever holding the full private key.
+	recipient := common.HexToAddress("0x079E7DB2642B3143CE43E0C563b17e58B724c3B6")
+	amount := big.NewInt(1000) // 1000 wei
 
-	// Create participants
-	participants := make([]*dkg.ParticipantImpl, total)
-	for i := 0; i < total; i++ {
-		p, err := dkg.NewParticipant(dkg.ParticipantID(i+1), threshold, total, seed)
-		if err != nil {
-			log.Fatalf("failed to create participant %d: %v", i+1, err)
-		}
-		participants[i] = p
+	fmt.Printf("Signing and sending %s wei to %s...\n", amount, recipient.Hex())
+	tx, err := w.SendTransaction(context.Background(), recipient, amount)
+	if err != nil {
+		log.Fatalf("send transaction: %v", err)
 	}
 
-	// Round 1: generate and distribute broadcasts + shares
-	broadcasts := make([]*dkg.Round1Broadcast, total)
-	allShares := make([]map[dkg.ParticipantID]*dkg.Round1Share, total)
-	for i, p := range participants {
-		bc, shares, err := p.Round1()
-		if err != nil {
-			log.Fatalf("participant %d Round1: %v", i+1, err)
-		}
-		broadcasts[i] = bc
-		allShares[i] = shares
-		fmt.Printf("Participant %d: generated %d commitments\n", i+1, len(bc.Commitments))
+	fmt.Printf("Transaction sent!\n")
+	fmt.Printf("  Hash:     %s\n", tx.Hash().Hex())
+	fmt.Printf("  Nonce:    %d\n", tx.Nonce())
+	fmt.Printf("  Gas:      %d\n", tx.Gas())
+	fmt.Printf("  GasPrice: %s gwei\n", new(big.Int).Div(tx.GasPrice(), big.NewInt(1e9)))
+}
+
+// loadOrCreate loads key shares from disk if keys.json exists,
+// otherwise runs keygen, prints the address, and saves the shares.
+func loadOrCreate() (*wallet.Wallet, error) {
+	if _, err := os.Stat(keysFile); err == nil {
+		fmt.Println("Loading existing key shares from", keysFile)
+		return wallet.Load(keysFile, rpcURL, threshold)
 	}
 
-	// Distribute broadcasts and shares to every other participant
-	for _, p := range participants {
-		for _, bc := range broadcasts {
-			if bc.SenderID == p.GetID() {
-				continue
-			}
-			if err := p.ProcessBroadcast(bc); err != nil {
-				log.Fatalf("participant %d ProcessBroadcast: %v", p.GetID(), err)
-			}
-		}
-		for senderIdx, shares := range allShares {
-			senderID := dkg.ParticipantID(senderIdx + 1)
-			if senderID == p.GetID() {
-				continue
-			}
-			if err := p.ProcessShare(shares[p.GetID()]); err != nil {
-				log.Fatalf("participant %d ProcessShare from %d: %v", p.GetID(), senderID, err)
-			}
-		}
+	fmt.Println("No key shares found — running MPC keygen (3 parties, 2-of-3)...")
+	w, err := wallet.New(parties, threshold, rpcURL)
+	if err != nil {
+		return nil, err
 	}
 
-	// Round 2: combine shares
-	fmt.Println()
-	var groupKey string
-	for _, p := range participants {
-		res, err := p.Round2()
-		if err != nil {
-			log.Fatalf("participant %d Round2: %v", p.GetID(), err)
-		}
-		if groupKey == "" {
-			groupKey = res.GroupPublicKey.X.String()[:16] + "..."
-		}
-		fmt.Printf("Participant %d: final share index=%d value=%s...\n",
-			res.ParticipantID, res.FinalShare.Index, res.FinalShare.Value.String()[:16])
+	if err := w.Save(keysFile); err != nil {
+		return nil, fmt.Errorf("save keys: %w", err)
 	}
-
-	fmt.Printf("\nGroup public key X: %s\n", groupKey)
-	fmt.Println("DKG complete.")
+	fmt.Printf("Key shares saved to %s — fund this address and re-run:\n", keysFile)
+	fmt.Printf("  %s\n\n", w.Address().Hex())
+	return w, nil
 }
