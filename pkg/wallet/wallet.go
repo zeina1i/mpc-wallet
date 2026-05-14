@@ -123,7 +123,7 @@ func (w *Wallet) SendTransaction(ctx context.Context, to common.Address, value *
 	}
 
 	// Assemble the 65-byte [R || S || V] signature Ethereum expects
-	sig, err := assembleSignature(r.Bytes(), s.Bytes(), chainID)
+	sig, err := assembleSignature(r.Bytes(), s.Bytes(), txHash.Bytes(), w.address)
 	if err != nil {
 		return nil, fmt.Errorf("assemble sig: %w", err)
 	}
@@ -140,20 +140,79 @@ func (w *Wallet) SendTransaction(ctx context.Context, to common.Address, value *
 	return signedTx, nil
 }
 
-// assembleSignature builds the 65-byte Ethereum signature [R(32) || S(32) || V(1)].
-// It tries V=0 and V=1 to find which recovers the correct address.
-func assembleSignature(rBytes, sBytes []byte, chainID *big.Int) ([]byte, error) {
+// SendTransactionOwn is like SendTransaction but uses our own pkg/mta and
+// pkg/paillier for the MtA steps instead of tss-lib's internal implementation.
+func (w *Wallet) SendTransactionOwn(ctx context.Context, to common.Address, value *big.Int) (*types.Transaction, error) {
+	nonce, err := w.client.PendingNonceAt(ctx, w.address)
+	if err != nil {
+		return nil, fmt.Errorf("nonce: %w", err)
+	}
+	gasPrice, err := w.client.SuggestGasPrice(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("gas price: %w", err)
+	}
+	chainID, err := w.client.ChainID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("chain id: %w", err)
+	}
+
+	tx := types.NewTransaction(nonce, to, value, 21000, gasPrice, nil)
+	signer := types.NewEIP155Signer(chainID)
+	txHash := signer.Hash(tx)
+
+	// Extract raw xi shares and sign with our own MtA
+	shares := make([]*big.Int, len(w.keys))
+	for i, k := range w.keys {
+		shares[i] = k.Xi
+	}
+	r, s, err := threshold.SignOwn(txHash.Bytes(), shares)
+	if err != nil {
+		return nil, fmt.Errorf("mpc sign (own): %w", err)
+	}
+
+	sig, err := assembleSignature(r.Bytes(), s.Bytes(), txHash.Bytes(), w.address)
+	if err != nil {
+		return nil, fmt.Errorf("assemble sig: %w", err)
+	}
+	signedTx, err := tx.WithSignature(signer, sig)
+	if err != nil {
+		return nil, fmt.Errorf("attach sig: %w", err)
+	}
+	if err := w.client.SendTransaction(ctx, signedTx); err != nil {
+		return nil, fmt.Errorf("broadcast: %w", err)
+	}
+	return signedTx, nil
+}
+
+// assembleSignature builds the 65-byte [R(32) || S(32) || V(1)] Ethereum signature.
+// It enforces EIP-2 low-s (s <= n/2), then tries V=0 and V=1 to find the
+// recovery id that recovers back to our wallet address.
+func assembleSignature(rBytes, sBytes, txHash []byte, addr common.Address) ([]byte, error) {
 	sig := make([]byte, 65)
 	copy(sig[32-len(rBytes):32], rBytes)
+
+	// EIP-2: s must be in the lower half of the curve order.
+	// If s > n/2, replace s with n-s; the valid recovery ID is still found by trying both.
+	curve := crypto.S256()
+	halfN := new(big.Int).Rsh(curve.Params().N, 1)
+	s := new(big.Int).SetBytes(sBytes)
+	if s.Cmp(halfN) > 0 {
+		s.Sub(curve.Params().N, s)
+		sBytes = s.Bytes()
+	}
 	copy(sig[64-len(sBytes):64], sBytes)
 
-	// Try both recovery values
 	for v := byte(0); v <= 1; v++ {
 		sig[64] = v
-		_, err := crypto.Ecrecover(make([]byte, 32), sig) // just validate format
-		if err == nil {
+		pub, err := crypto.Ecrecover(txHash, sig)
+		if err != nil {
+			continue
+		}
+		// pub is uncompressed: 0x04 || X(32) || Y(32)
+		recovered := crypto.Keccak256(pub[1:])[12:]
+		if common.BytesToAddress(recovered) == addr {
 			return sig, nil
 		}
 	}
-	return sig, nil // return as-is; the broadcaster will reject if invalid
+	return nil, fmt.Errorf("could not find valid recovery id for address %s", addr.Hex())
 }

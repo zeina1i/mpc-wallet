@@ -32,7 +32,7 @@ func main() {
 	amount := big.NewInt(1000) // 1000 wei
 
 	fmt.Printf("Signing and sending %s wei to %s...\n", amount, recipient.Hex())
-	tx, err := w.SendTransaction(context.Background(), recipient, amount)
+	tx, err := w.SendTransactionOwn(context.Background(), recipient, amount)
 	if err != nil {
 		log.Fatalf("send transaction: %v", err)
 	}
@@ -65,3 +65,5 @@ func loadOrCreate() (*wallet.Wallet, error) {
 	fmt.Printf("  %s\n\n", w.Address().Hex())
 	return w, nil
 }
+
+//claude --resume 5e898ffc-a917-4215-b07a-6cbea2958cba                                                                                                     1% until auto-compact
