@@ -65,5 +65,3 @@ func loadOrCreate() (*wallet.Wallet, error) {
 	fmt.Printf("  %s\n\n", w.Address().Hex())
 	return w, nil
 }
-
-//claude --resume 5e898ffc-a917-4215-b07a-6cbea2958cba                                                                                                     1% until auto-compact
