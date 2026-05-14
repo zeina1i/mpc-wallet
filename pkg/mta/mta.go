@@ -75,7 +75,10 @@ func Step2Bob(pub *paillier.PublicKey, cA *paillier.Ciphertext, b, q *big.Int) (
 //
 //	α = Dec(c_B) = a*b - β  (mod q)
 func Step3Alice(priv *paillier.PrivateKey, bobOut *BobOutput, q *big.Int) (*AliceOutput, error) {
-	alpha, _ := paillier.Decrypt(priv, bobOut.MaskedCipher)
-	alpha.Mod(alpha, q) // bring into [0, q)
+	alpha, err := paillier.Decrypt(priv, bobOut.MaskedCipher)
+	if err != nil {
+		return nil, err
+	}
+	alpha.Mod(alpha, q)
 	return &AliceOutput{Alpha: alpha}, nil
 }
